@@ -143,7 +143,7 @@ def start_train(train_dir):
 #     main()
  
 
-start_train('../input/football/GrayScaleTrain/')    
+#start_train('../input/football/GrayScaleTrain/')    
 
 # # Inference
 # test_sampler = SubsetRandomSampler(test_idx)
