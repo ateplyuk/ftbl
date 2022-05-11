@@ -24,9 +24,9 @@ EPOCHS = 5
 LR = 0.0001
 IM_SIZE = 300
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-TRAIN_DIR = '../input/football/GrayScaleTrain/'
+#TRAIN_DIR = '../input/football/GrayScaleTrain/'
 
-def main():
+def start_train(train_dir):
     image_transforms = transforms.Compose([
             transforms.Resize((IM_SIZE, IM_SIZE)),
             transforms.ToTensor(),
@@ -34,7 +34,7 @@ def main():
                                  [0.5, 0.5, 0.5])
         ])
 
-    img_dataset = datasets.ImageFolder(root = TRAIN_DIR, transform = image_transforms)
+    img_dataset = datasets.ImageFolder(root = train_dir, transform = image_transforms)
 
     idx2class = {v: k for k, v in img_dataset.class_to_idx.items()}
     NUM_CL = len(idx2class)
@@ -139,9 +139,11 @@ def main():
 
         torch.save(model.state_dict(), './fotmodel.pt')
         
-if __name__=='__main__':
-    main()
-   
+# if __name__=='__main__':
+#     main()
+ 
+
+start_train('../input/football/GrayScaleTrain/')    
 
 # # Inference
 # test_sampler = SubsetRandomSampler(test_idx)
