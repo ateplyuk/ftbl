@@ -24,7 +24,6 @@ EPOCHS = 5
 LR = 0.0001
 IM_SIZE = 300
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-#TRAIN_DIR = '../input/football/GrayScaleTrain/'
 
 def start_train(train_dir):
     image_transforms = transforms.Compose([
@@ -139,29 +138,23 @@ def start_train(train_dir):
 
         torch.save(model.state_dict(), './fotmodel.pt')
         
-# if __name__=='__main__':
-#     main()
- 
+    # Test
+    test_sampler = SubsetRandomSampler(test_idx)
+    test_loader = DataLoader(dataset=img_dataset, shuffle=False, batch_size=1, sampler=test_sampler)
 
-#start_train('../input/football/GrayScaleTrain/')    
+    y_pred_list = []
+    y_true_list = []
+    with torch.no_grad():
+        for x_batch, y_batch in tqdm(test_loader):
+            x_batch, y_batch = x_batch.to(DEVICE), y_batch.to(DEVICE)
+            y_test_pred = model(x_batch)
+            _, y_pred_tag = torch.max(y_test_pred, dim = 1)
+            y_pred_list.append(y_pred_tag.cpu().numpy())
+            y_true_list.append(y_batch.cpu().numpy())
 
-# # Inference
-# test_sampler = SubsetRandomSampler(test_idx)
-# test_loader = DataLoader(dataset=img_dataset, shuffle=False, batch_size=1, sampler=test_sampler)
+    y_pred_list = [i[0][0][0] for i in y_pred_list]
+    y_true_list = [i[0] for i in y_true_list]
 
-# y_pred_list = []
-# y_true_list = []
-# with torch.no_grad():
-#     for x_batch, y_batch in tqdm(test_loader):
-#         x_batch, y_batch = x_batch.to(DEVICE), y_batch.to(DEVICE)
-#         y_test_pred = model(x_batch)
-#         _, y_pred_tag = torch.max(y_test_pred, dim = 1)
-#         y_pred_list.append(y_pred_tag.cpu().numpy())
-#         y_true_list.append(y_batch.cpu().numpy())
-        
-# y_pred_list = [i[0][0][0] for i in y_pred_list]
-# y_true_list = [i[0] for i in y_true_list]
+    print(classification_report(y_true_list, y_pred_list))
 
-# print(classification_report(y_true_list, y_pred_list))
-
-# print(confusion_matrix(y_true_list, y_pred_list))
+    print(confusion_matrix(y_true_list, y_pred_list))
