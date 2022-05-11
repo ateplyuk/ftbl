@@ -136,7 +136,7 @@ def start_train(train_dir):
         print(f'Epoch {e+0:02}: | Train Loss: {train_epoch_loss/len(train_loader):.5f} | Val Loss: {val_epoch_loss/len(val_loader):.5f} | Train Acc: {train_epoch_acc/len(train_loader):.3f}| Val Acc: {val_epoch_acc/len(val_loader):.3f}')
 
 
-        torch.save(model.state_dict(), './fotmodel.pt')
+    torch.save(model.state_dict(), './fotmodel.pt')
         
     # Test
     test_sampler = SubsetRandomSampler(test_idx)
