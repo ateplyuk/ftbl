@@ -9,7 +9,7 @@ def read(fname):
 
 requirements = read('requirements.txt').splitlines()
 
-setup(name='tst',
+setup(name='ftbl',
       version='1.0.0',
       description='test',
       url='https://github.com/ateplyuk/ftbl',
