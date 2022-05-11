@@ -1,1 +1,165 @@
-{"metadata":{"kernelspec":{"language":"python","display_name":"Python 3","name":"python3"},"language_info":{"name":"python","version":"3.7.12","mimetype":"text/x-python","codemirror_mode":{"name":"ipython","version":3},"pygments_lexer":"ipython3","nbconvert_exporter":"python","file_extension":".py"}},"nbformat_minor":4,"nbformat":4,"cells":[{"cell_type":"code","source":"import numpy as np \nimport pandas as pd\nfrom PIL import Image\nimport os\nfrom tqdm.notebook import tqdm\n\nimport torch\nimport torch.nn as nn\nimport torchvision\nimport torch.optim as optim\nfrom torchvision import transforms, utils, datasets\nfrom torch.utils.data import Dataset, DataLoader, SubsetRandomSampler\nfrom sklearn.metrics import classification_report, confusion_matrix\n\ndef multi_acc(y_pred, y_test):\n    y_pred_softmax = torch.log_softmax(y_pred, dim = 1)\n    _, y_pred_tags = torch.max(y_pred_softmax, dim = 1)    \n    correct_pred = (y_pred_tags == y_test).float()\n    acc = correct_pred.sum() / len(correct_pred)\n    acc = torch.round(acc * 100)\n    return acc\n\nEPOCHS = 5\nLR = 0.0001\nIM_SIZE = 300\nDEVICE = torch.device(\"cuda:0\" if torch.cuda.is_available() else \"cpu\")\nTRAIN_DIR = '../input/football/GrayScaleTrain/'\n\ndef main():\n    image_transforms = transforms.Compose([\n            transforms.Resize((IM_SIZE, IM_SIZE)),\n            transforms.ToTensor(),\n            transforms.Normalize([0.5, 0.5, 0.5],\n                                 [0.5, 0.5, 0.5])\n        ])\n\n    img_dataset = datasets.ImageFolder(root = TRAIN_DIR, transform = image_transforms)\n\n    idx2class = {v: k for k, v in img_dataset.class_to_idx.items()}\n    NUM_CL = len(idx2class)\n\n    img_dataset_size = len(img_dataset)\n    img_dataset_indices = list(range(img_dataset_size))\n\n    np.random.shuffle(img_dataset_indices)\n\n    test_split_index = int(np.floor(0.3 * img_dataset_size))\n    train_idx, test_idx = img_dataset_indices[test_split_index:], img_dataset_indices[:test_split_index]\n\n    val_split_index = int(np.floor(0.3 * len(test_idx)))\n    val_idx, test_idx = test_idx[val_split_index:], test_idx[:val_split_index]\n\n    print(len(train_idx), len(val_idx), len(test_idx))\n\n    train_sampler = SubsetRandomSampler(train_idx)\n    val_sampler = SubsetRandomSampler(val_idx)\n\n    train_loader = DataLoader(dataset=img_dataset, shuffle=False, batch_size=8, sampler=train_sampler)\n    val_loader = DataLoader(dataset=img_dataset, shuffle=False, batch_size=1, sampler=val_sampler)\n\n    single_batch = next(iter(train_loader))\n    single_batch[0].shape\n    \n    class FblClassifier(nn.Module):\n        def __init__(self):\n            super(FblClassifier, self).__init__()\n            self.block1 = self.conv_block(c_in=3, c_out=256, dropout=0.1, kernel_size=5, stride=1, padding=2)\n            self.block2 = self.conv_block(c_in=256, c_out=128, dropout=0.1, kernel_size=3, stride=1, padding=1)\n            self.block3 = self.conv_block(c_in=128, c_out=64, dropout=0.1, kernel_size=3, stride=1, padding=1)\n            self.lastcnn = nn.Conv2d(in_channels=64, out_channels=NUM_CL, kernel_size=75, stride=1, padding=0)\n            self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)\n        def forward(self, x):\n            x = self.block1(x)\n            x = self.maxpool(x)\n            x = self.block2(x)\n            x = self.block3(x)\n            x = self.maxpool(x)\n            x = self.lastcnn(x)\n            return x\n        def conv_block(self, c_in, c_out, dropout, **kwargs):\n            seq_block = nn.Sequential(\n                nn.Conv2d(in_channels=c_in, out_channels=c_out, **kwargs),\n                nn.BatchNorm2d(num_features=c_out),\n                nn.ReLU(),\n                nn.Dropout2d(p=dropout)\n            )\n            return seq_block\n\n    model = FblClassifier()\n    model.to(DEVICE)\n    print(model)\n    criterion = nn.CrossEntropyLoss()\n    optimizer = optim.Adam(model.parameters(), lr=LR)\n\n    accuracy_stats = {\n        'train': [],\n        \"val\": []\n    }\n    loss_stats = {\n        'train': [],\n        \"val\": []\n    }\n\n    print(\"Begin training.\")\n    for e in tqdm(range(1, EPOCHS)):\n        # TRAINING\n        train_epoch_loss = 0\n        train_epoch_acc = 0\n        model.train()\n        for X_train_batch, y_train_batch in train_loader:\n            X_train_batch, y_train_batch = X_train_batch.to(DEVICE), y_train_batch.to(DEVICE)\n            optimizer.zero_grad()\n            y_train_pred = model(X_train_batch).squeeze()\n            train_loss = criterion(y_train_pred, y_train_batch)\n            train_acc = multi_acc(y_train_pred, y_train_batch)\n            train_loss.backward()\n            optimizer.step()\n            train_epoch_loss += train_loss.item()\n            train_epoch_acc += train_acc.item()\n        # VALIDATION\n        with torch.no_grad():\n            model.eval()\n            val_epoch_loss = 0\n            val_epoch_acc = 0\n            for X_val_batch, y_val_batch in val_loader:\n                X_val_batch, y_val_batch = X_val_batch.to(DEVICE), y_val_batch.to(DEVICE)\n                y_val_pred = model(X_val_batch).squeeze()\n                y_val_pred = torch.unsqueeze(y_val_pred, 0)\n                val_loss = criterion(y_val_pred, y_val_batch)\n                val_acc = multi_acc(y_val_pred, y_val_batch)\n                val_epoch_loss += train_loss.item()\n                val_epoch_acc += train_acc.item()\n        loss_stats['train'].append(train_epoch_loss/len(train_loader))\n        loss_stats['val'].append(val_epoch_loss/len(val_loader))\n        accuracy_stats['train'].append(train_epoch_acc/len(train_loader))\n        accuracy_stats['val'].append(val_epoch_acc/len(val_loader))\n        print(f'Epoch {e+0:02}: | Train Loss: {train_epoch_loss/len(train_loader):.5f} | Val Loss: {val_epoch_loss/len(val_loader):.5f} | Train Acc: {train_epoch_acc/len(train_loader):.3f}| Val Acc: {val_epoch_acc/len(val_loader):.3f}')\n\n\n        torch.save(model.state_dict(), './fotmodel.pt')\n        \nif __name__=='__main__':\n    main()\n   \n\n# # Inference\n# test_sampler = SubsetRandomSampler(test_idx)\n# test_loader = DataLoader(dataset=img_dataset, shuffle=False, batch_size=1, sampler=test_sampler)\n\n# y_pred_list = []\n# y_true_list = []\n# with torch.no_grad():\n#     for x_batch, y_batch in tqdm(test_loader):\n#         x_batch, y_batch = x_batch.to(DEVICE), y_batch.to(DEVICE)\n#         y_test_pred = model(x_batch)\n#         _, y_pred_tag = torch.max(y_test_pred, dim = 1)\n#         y_pred_list.append(y_pred_tag.cpu().numpy())\n#         y_true_list.append(y_batch.cpu().numpy())\n        \n# y_pred_list = [i[0][0][0] for i in y_pred_list]\n# y_true_list = [i[0] for i in y_true_list]\n\n# print(classification_report(y_true_list, y_pred_list))\n\n# print(confusion_matrix(y_true_list, y_pred_list))","metadata":{"_uuid":"df745f58-cc92-45df-9c84-ce298d8605b8","_cell_guid":"0914b037-45dc-4d3d-afc4-2b19cda40b5f","collapsed":false,"jupyter":{"outputs_hidden":false},"execution":{"iopub.status.busy":"2022-05-11T08:17:23.110727Z","iopub.execute_input":"2022-05-11T08:17:23.110980Z"},"trusted":true},"execution_count":null,"outputs":[]}]}
+import numpy as np 
+import pandas as pd
+from PIL import Image
+import os
+from tqdm.notebook import tqdm
+
+import torch
+import torch.nn as nn
+import torchvision
+import torch.optim as optim
+from torchvision import transforms, utils, datasets
+from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
+from sklearn.metrics import classification_report, confusion_matrix
+
+def multi_acc(y_pred, y_test):
+    y_pred_softmax = torch.log_softmax(y_pred, dim = 1)
+    _, y_pred_tags = torch.max(y_pred_softmax, dim = 1)    
+    correct_pred = (y_pred_tags == y_test).float()
+    acc = correct_pred.sum() / len(correct_pred)
+    acc = torch.round(acc * 100)
+    return acc
+
+EPOCHS = 5
+LR = 0.0001
+IM_SIZE = 300
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+TRAIN_DIR = '../input/football/GrayScaleTrain/'
+
+def main():
+    image_transforms = transforms.Compose([
+            transforms.Resize((IM_SIZE, IM_SIZE)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.5, 0.5, 0.5],
+                                 [0.5, 0.5, 0.5])
+        ])
+
+    img_dataset = datasets.ImageFolder(root = TRAIN_DIR, transform = image_transforms)
+
+    idx2class = {v: k for k, v in img_dataset.class_to_idx.items()}
+    NUM_CL = len(idx2class)
+
+    img_dataset_size = len(img_dataset)
+    img_dataset_indices = list(range(img_dataset_size))
+
+    np.random.shuffle(img_dataset_indices)
+
+    test_split_index = int(np.floor(0.3 * img_dataset_size))
+    train_idx, test_idx = img_dataset_indices[test_split_index:], img_dataset_indices[:test_split_index]
+
+    val_split_index = int(np.floor(0.3 * len(test_idx)))
+    val_idx, test_idx = test_idx[val_split_index:], test_idx[:val_split_index]
+
+    print(len(train_idx), len(val_idx), len(test_idx))
+
+    train_sampler = SubsetRandomSampler(train_idx)
+    val_sampler = SubsetRandomSampler(val_idx)
+
+    train_loader = DataLoader(dataset=img_dataset, shuffle=False, batch_size=8, sampler=train_sampler)
+    val_loader = DataLoader(dataset=img_dataset, shuffle=False, batch_size=1, sampler=val_sampler)
+
+    single_batch = next(iter(train_loader))
+    single_batch[0].shape
+    
+    class FblClassifier(nn.Module):
+        def __init__(self):
+            super(FblClassifier, self).__init__()
+            self.block1 = self.conv_block(c_in=3, c_out=256, dropout=0.1, kernel_size=5, stride=1, padding=2)
+            self.block2 = self.conv_block(c_in=256, c_out=128, dropout=0.1, kernel_size=3, stride=1, padding=1)
+            self.block3 = self.conv_block(c_in=128, c_out=64, dropout=0.1, kernel_size=3, stride=1, padding=1)
+            self.lastcnn = nn.Conv2d(in_channels=64, out_channels=NUM_CL, kernel_size=75, stride=1, padding=0)
+            self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+        def forward(self, x):
+            x = self.block1(x)
+            x = self.maxpool(x)
+            x = self.block2(x)
+            x = self.block3(x)
+            x = self.maxpool(x)
+            x = self.lastcnn(x)
+            return x
+        def conv_block(self, c_in, c_out, dropout, **kwargs):
+            seq_block = nn.Sequential(
+                nn.Conv2d(in_channels=c_in, out_channels=c_out, **kwargs),
+                nn.BatchNorm2d(num_features=c_out),
+                nn.ReLU(),
+                nn.Dropout2d(p=dropout)
+            )
+            return seq_block
+
+    model = FblClassifier()
+    model.to(DEVICE)
+    print(model)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=LR)
+
+    accuracy_stats = {
+        'train': [],
+        "val": []
+    }
+    loss_stats = {
+        'train': [],
+        "val": []
+    }
+
+    print("Begin training.")
+    for e in tqdm(range(1, EPOCHS)):
+        # TRAINING
+        train_epoch_loss = 0
+        train_epoch_acc = 0
+        model.train()
+        for X_train_batch, y_train_batch in train_loader:
+            X_train_batch, y_train_batch = X_train_batch.to(DEVICE), y_train_batch.to(DEVICE)
+            optimizer.zero_grad()
+            y_train_pred = model(X_train_batch).squeeze()
+            train_loss = criterion(y_train_pred, y_train_batch)
+            train_acc = multi_acc(y_train_pred, y_train_batch)
+            train_loss.backward()
+            optimizer.step()
+            train_epoch_loss += train_loss.item()
+            train_epoch_acc += train_acc.item()
+        # VALIDATION
+        with torch.no_grad():
+            model.eval()
+            val_epoch_loss = 0
+            val_epoch_acc = 0
+            for X_val_batch, y_val_batch in val_loader:
+                X_val_batch, y_val_batch = X_val_batch.to(DEVICE), y_val_batch.to(DEVICE)
+                y_val_pred = model(X_val_batch).squeeze()
+                y_val_pred = torch.unsqueeze(y_val_pred, 0)
+                val_loss = criterion(y_val_pred, y_val_batch)
+                val_acc = multi_acc(y_val_pred, y_val_batch)
+                val_epoch_loss += train_loss.item()
+                val_epoch_acc += train_acc.item()
+        loss_stats['train'].append(train_epoch_loss/len(train_loader))
+        loss_stats['val'].append(val_epoch_loss/len(val_loader))
+        accuracy_stats['train'].append(train_epoch_acc/len(train_loader))
+        accuracy_stats['val'].append(val_epoch_acc/len(val_loader))
+        print(f'Epoch {e+0:02}: | Train Loss: {train_epoch_loss/len(train_loader):.5f} | Val Loss: {val_epoch_loss/len(val_loader):.5f} | Train Acc: {train_epoch_acc/len(train_loader):.3f}| Val Acc: {val_epoch_acc/len(val_loader):.3f}')
+
+
+        torch.save(model.state_dict(), './fotmodel.pt')
+        
+if __name__=='__main__':
+    main()
+   
+
+# # Inference
+# test_sampler = SubsetRandomSampler(test_idx)
+# test_loader = DataLoader(dataset=img_dataset, shuffle=False, batch_size=1, sampler=test_sampler)
+
+# y_pred_list = []
+# y_true_list = []
+# with torch.no_grad():
+#     for x_batch, y_batch in tqdm(test_loader):
+#         x_batch, y_batch = x_batch.to(DEVICE), y_batch.to(DEVICE)
+#         y_test_pred = model(x_batch)
+#         _, y_pred_tag = torch.max(y_test_pred, dim = 1)
+#         y_pred_list.append(y_pred_tag.cpu().numpy())
+#         y_true_list.append(y_batch.cpu().numpy())
+        
+# y_pred_list = [i[0][0][0] for i in y_pred_list]
+# y_true_list = [i[0] for i in y_true_list]
+
+# print(classification_report(y_true_list, y_pred_list))
+
+# print(confusion_matrix(y_true_list, y_pred_list))
